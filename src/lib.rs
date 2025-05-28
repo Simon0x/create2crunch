@@ -348,40 +348,42 @@ pub fn gpu(config: Config) -> ocl::Result<()> {
     // the last work duration in milliseconds
     let mut work_duration_millis: u64 = 0;
 
+    // Create reusable buffers once to avoid memory leaks
+    let mut message_buffer = Buffer::builder()
+        .queue(ocl_pq.queue().clone())
+        .flags(MemFlags::new().read_write())
+        .len(4)
+        .build()?;
+
+    let mut nonce_buffer = Buffer::builder()
+        .queue(ocl_pq.queue().clone())
+        .flags(MemFlags::new().read_write())
+        .len(1)
+        .build()?;
+
+    let mut solutions: Vec<u64> = vec![0; 1];
+    let solutions_buffer = Buffer::builder()
+        .queue(ocl_pq.queue().clone())
+        .flags(MemFlags::new().write_only())
+        .len(1)
+        .copy_host_slice(&solutions)
+        .build()?;
+
     // begin searching for addresses
     loop {
         // construct the 4-byte message to hash, leaving last 8 of salt empty
         let salt = FixedBytes::<4>::random();
 
-        // build a corresponding buffer for passing the message to the kernel
-        let message_buffer = Buffer::builder()
-            .queue(ocl_pq.queue().clone())
-            .flags(MemFlags::new().read_only())
-            .len(4)
-            .copy_host_slice(&salt[..])
-            .build()?;
+        // Update the message buffer with new salt
+        message_buffer.write(&salt[..]).enq()?;
 
         // reset nonce & create a buffer to view it in little-endian
         // for more uniformly distributed nonces, we shall initialize it to a random value
         let mut nonce: [u32; 1] = rng.gen();
         let mut view_buf = [0; 8];
 
-        // build a corresponding buffer for passing the nonce to the kernel
-        let mut nonce_buffer = Buffer::builder()
-            .queue(ocl_pq.queue().clone())
-            .flags(MemFlags::new().read_only())
-            .len(1)
-            .copy_host_slice(&nonce)
-            .build()?;
-
-        // establish a buffer for nonces that result in desired addresses
-        let mut solutions: Vec<u64> = vec![0; 1];
-        let solutions_buffer = Buffer::builder()
-            .queue(ocl_pq.queue().clone())
-            .flags(MemFlags::new().write_only())
-            .len(1)
-            .copy_host_slice(&solutions)
-            .build()?;
+        // Update the nonce buffer with initial nonce
+        nonce_buffer.write(&nonce[..]).enq()?;
 
         // repeatedly enqueue kernel to search for new addresses
         loop {
@@ -506,12 +508,7 @@ pub fn gpu(config: Config) -> ocl::Result<()> {
             nonce[0] += 1;
 
             // update the nonce buffer with the incremented nonce value
-            nonce_buffer = Buffer::builder()
-                .queue(ocl_pq.queue().clone())
-                .flags(MemFlags::new().read_write())
-                .len(1)
-                .copy_host_slice(&nonce)
-                .build()?;
+            nonce_buffer.write(&nonce[..]).enq()?;
         }
 
         // iterate over each solution, first converting to a fixed array
