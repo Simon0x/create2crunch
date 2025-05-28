@@ -21,7 +21,7 @@ mod reward;
 pub use reward::Reward;
 
 // workset size (tweak this!)
-const WORK_SIZE: u32 = 0x4000000; // max. 0x15400000 to abs. max 0xffffffff
+const WORK_SIZE: u32 = 0x20000000; // max. 0x15400000 to abs. max 0xffffffff - increased for RTX 5070 Ti
 
 const WORK_FACTOR: u128 = (WORK_SIZE as u128) / 1_000_000;
 const CONTROL_CHARACTER: u8 = 0xff;
@@ -230,7 +230,7 @@ pub fn cpu(config: Config) -> Result<(), Box<dyn Error>> {
                     .expect("Couldn't write to `efficient_addresses.txt` file.");
 
                 // release the file lock
-                file.unlock().expect("Couldn't unlock file.")
+                FileExt::unlock(&file).expect("Couldn't unlock file.");
             });
     }
 }
@@ -275,11 +275,41 @@ pub fn gpu(config: Config) -> ocl::Result<()> {
     // set up a controller for terminal output
     let term = Term::stdout();
 
-    // set up a platform to use
-    let platform = Platform::new(ocl::core::default_platform()?);
+    // Find NVIDIA platform instead of using default
+    let platforms = Platform::list();
+    println!("Available OpenCL platforms:");
+    for (i, platform) in platforms.iter().enumerate() {
+        println!("  Platform {}: {}", i, platform.name().unwrap_or_else(|_| "Unknown".to_string()));
+    }
+    
+    // Try to find NVIDIA platform, fall back to default if not found
+    let platform = platforms.iter()
+        .find(|p| p.name().unwrap_or_default().contains("NVIDIA"))
+        .cloned()
+        .unwrap_or_else(|| Platform::new(ocl::core::default_platform().unwrap()));
+    
+    println!("Selected OpenCL Platform: {}", platform.name().unwrap_or_else(|_| "Unknown".to_string()));
 
+    // List available devices on this platform
+    let devices = Device::list_all(platform)?;
+    println!("Available devices on selected platform:");
+    for (i, device) in devices.iter().enumerate() {
+        println!("  Device {}: {}", i, device.name().unwrap_or_else(|_| "Unknown".to_string()));
+    }
+    
     // set up the device to use
     let device = Device::by_idx_wrap(platform, config.gpu_device as usize)?;
+    println!("Selected OpenCL Device: {}", device.name().unwrap_or_else(|_| "Unknown".to_string()));
+    let max_wg_size = device.max_wg_size().unwrap_or(256);
+    println!("Max Work Group Size: {}", max_wg_size);
+    
+    // Calculate optimal local work size (typically 256 or 512 for modern GPUs)
+    let local_work_size = std::cmp::min(max_wg_size as u32, 512);
+    println!("Using Local Work Size: {}", local_work_size);
+    
+    // Ensure global work size is multiple of local work size
+    let global_work_size = ((WORK_SIZE + local_work_size - 1) / local_work_size) * local_work_size;
+    println!("Using Global Work Size: {} (was {})", global_work_size, WORK_SIZE);
 
     // set up the context to use
     let context = Context::builder()
@@ -297,7 +327,7 @@ pub fn gpu(config: Config) -> ocl::Result<()> {
     let queue = Queue::new(&context, device, None)?;
 
     // set up the "proqueue" (or amalgamation of various elements) to use
-    let ocl_pq = ProQue::new(context, queue, program, Some(WORK_SIZE));
+    let ocl_pq = ProQue::new(context, queue, program, Some(global_work_size));
 
     // create a random number generator
     let mut rng = thread_rng();
@@ -368,8 +398,13 @@ pub fn gpu(config: Config) -> ocl::Result<()> {
             kern.set_arg("nonce", Some(&nonce_buffer))?;
             kern.set_arg("solutions", &solutions_buffer)?;
 
-            // enqueue the kernel
-            unsafe { kern.enq()? };
+            // enqueue the kernel with proper work group sizing
+            unsafe { 
+                kern.cmd()
+                    .global_work_size(global_work_size)
+                    .local_work_size(local_work_size)
+                    .enq()? 
+            };
 
             // calculate the current time
             let mut now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
@@ -392,7 +427,8 @@ pub fn gpu(config: Config) -> ocl::Result<()> {
                     - (total_runtime_mins * 60) as f64;
 
                 // determine the number of attempts being made per second
-                let work_rate: u128 = WORK_FACTOR * cumulative_nonce as u128;
+                let work_factor = (global_work_size as u128) / 1_000_000;
+                let work_rate: u128 = work_factor * cumulative_nonce as u128;
                 if total_runtime > 0.0 {
                     rate = 1.0 / total_runtime;
                 }
@@ -411,7 +447,7 @@ pub fn gpu(config: Config) -> ocl::Result<()> {
                     total_runtime_mins,
                     total_runtime_secs,
                     cumulative_nonce,
-                    WORK_SIZE.separated_string(),
+                    global_work_size.separated_string(),
                 ))?;
 
                 // display information about the attempt rate and found solutions
@@ -537,7 +573,7 @@ pub fn gpu(config: Config) -> ocl::Result<()> {
 
             writeln!(&file, "{output}").expect("Couldn't write to `efficient_addresses.txt` file.");
 
-            file.unlock().expect("Couldn't unlock file.");
+            FileExt::unlock(&file).expect("Couldn't unlock file.");
             found += 1;
         }
     }
