@@ -236,58 +236,61 @@ __kernel void hashMessage(
 
   nonce_t nonce;
 
-  // write the control character
-  sponge[0] = 0xffu;
+  // Vectorization: process 4 nonces per work item
+  for (int vec_i = 0; vec_i < 4; vec_i++) {
 
-  sponge[1] = S_1;
-  sponge[2] = S_2;
-  sponge[3] = S_3;
-  sponge[4] = S_4;
-  sponge[5] = S_5;
-  sponge[6] = S_6;
-  sponge[7] = S_7;
-  sponge[8] = S_8;
-  sponge[9] = S_9;
-  sponge[10] = S_10;
-  sponge[11] = S_11;
-  sponge[12] = S_12;
-  sponge[13] = S_13;
-  sponge[14] = S_14;
-  sponge[15] = S_15;
-  sponge[16] = S_16;
-  sponge[17] = S_17;
-  sponge[18] = S_18;
-  sponge[19] = S_19;
-  sponge[20] = S_20;
-  sponge[21] = S_21;
-  sponge[22] = S_22;
-  sponge[23] = S_23;
-  sponge[24] = S_24;
-  sponge[25] = S_25;
-  sponge[26] = S_26;
-  sponge[27] = S_27;
-  sponge[28] = S_28;
-  sponge[29] = S_29;
-  sponge[30] = S_30;
-  sponge[31] = S_31;
-  sponge[32] = S_32;
-  sponge[33] = S_33;
-  sponge[34] = S_34;
-  sponge[35] = S_35;
-  sponge[36] = S_36;
-  sponge[37] = S_37;
-  sponge[38] = S_38;
-  sponge[39] = S_39;
-  sponge[40] = S_40;
+    // write the control character
+    sponge[0] = 0xffu;
 
-  sponge[41] = d_message[0];
-  sponge[42] = d_message[1];
-  sponge[43] = d_message[2];
-  sponge[44] = d_message[3];
+    sponge[1] = S_1;
+    sponge[2] = S_2;
+    sponge[3] = S_3;
+    sponge[4] = S_4;
+    sponge[5] = S_5;
+    sponge[6] = S_6;
+    sponge[7] = S_7;
+    sponge[8] = S_8;
+    sponge[9] = S_9;
+    sponge[10] = S_10;
+    sponge[11] = S_11;
+    sponge[12] = S_12;
+    sponge[13] = S_13;
+    sponge[14] = S_14;
+    sponge[15] = S_15;
+    sponge[16] = S_16;
+    sponge[17] = S_17;
+    sponge[18] = S_18;
+    sponge[19] = S_19;
+    sponge[20] = S_20;
+    sponge[21] = S_21;
+    sponge[22] = S_22;
+    sponge[23] = S_23;
+    sponge[24] = S_24;
+    sponge[25] = S_25;
+    sponge[26] = S_26;
+    sponge[27] = S_27;
+    sponge[28] = S_28;
+    sponge[29] = S_29;
+    sponge[30] = S_30;
+    sponge[31] = S_31;
+    sponge[32] = S_32;
+    sponge[33] = S_33;
+    sponge[34] = S_34;
+    sponge[35] = S_35;
+    sponge[36] = S_36;
+    sponge[37] = S_37;
+    sponge[38] = S_38;
+    sponge[39] = S_39;
+    sponge[40] = S_40;
 
-  // populate the nonce
-  nonce.uint32_t[0] = get_global_id(0);
-  nonce.uint32_t[1] = d_nonce[0];
+    sponge[41] = d_message[0];
+    sponge[42] = d_message[1];
+    sponge[43] = d_message[2];
+    sponge[44] = d_message[3];
+
+    // populate the nonce (vectorized)
+    nonce.uint32_t[0] = get_global_id(0) * 4 + vec_i;
+    nonce.uint32_t[1] = d_nonce[0];
 
   // populate the body of the message with the nonce
   sponge[45] = nonce.uint8_t[0];
@@ -351,17 +354,20 @@ __kernel void hashMessage(
   // Apply keccakf
   keccakf(spongeBuffer);
 
-  // determine if the address meets the constraints
-  if (
-    hasLeading(digest) 
+    // determine if the address meets the constraints
+    if (
+      hasLeading(digest) 
 #if TOTAL_ZEROES <= 20
-    || hasTotal(digest)
+      || hasTotal(digest)
 #endif
-  ) {
-    // To be honest, if we are using OpenCL, 
-    // we just need to write one solution for all practical purposes,
-    // since the chance of multiple solutions appearing
-    // in a single workset is extremely low.
-    solutions[0] = nonce.uint64_t;
-  }
+    ) {
+      // With vectorization, we need atomic operations to avoid race conditions
+      // Find the first available slot atomically
+      for (int slot = 0; slot < 64; slot++) { // Check up to 64 solution slots
+        if (atom_cmpxchg(&solutions[slot], (ulong)0, nonce.uint64_t) == (ulong)0) {
+          break; // Successfully stored solution
+        }
+      }
+    }
+  } // End vectorization loop
 }
