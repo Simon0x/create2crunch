@@ -308,10 +308,10 @@ pub fn gpu(config: Config) -> ocl::Result<()> {
     println!("Using Local Work Size: {}", local_work_size);
     
     // Ensure global work size is multiple of local work size
-    // Divide by 4 for vectorization (each work item processes 4 nonces)
-    let vectorized_work_size = WORK_SIZE / 4;
+    // Divide by 8 for vectorization (each work item processes 8 nonces)
+    let vectorized_work_size = WORK_SIZE / 8;
     let global_work_size = ((vectorized_work_size + local_work_size - 1) / local_work_size) * local_work_size;
-    println!("Using Global Work Size: {} (vectorized from {})", global_work_size, WORK_SIZE);
+    println!("Using Global Work Size: {} (8x vectorized from {})", global_work_size, WORK_SIZE);
 
     // set up the context to use
     let context = Context::builder()
@@ -436,8 +436,8 @@ pub fn gpu(config: Config) -> ocl::Result<()> {
                     - (total_runtime_mins * 60) as f64;
 
                 // determine the number of attempts being made per second
-                // Account for 4x vectorization (each work item processes 4 nonces)
-                let work_factor = (global_work_size as u128 * 4) / 1_000_000;
+                // Account for 8x vectorization (each work item processes 8 nonces)
+                let work_factor = (global_work_size as u128 * 8) / 1_000_000;
                 let work_rate: u128 = work_factor * cumulative_nonce as u128;
                 if total_runtime > 0.0 {
                     rate = 1.0 / total_runtime;
@@ -452,12 +452,12 @@ pub fn gpu(config: Config) -> ocl::Result<()> {
                 // display information about the total runtime and work size
                 term.write_line(&format!(
                     "total runtime: {}:{:02}:{:02} ({} cycles)\t\t\t\
-                     work size per cycle: {} (4x vectorized)",
+                     work size per cycle: {} (8x vectorized)",
                     total_runtime_hrs,
                     total_runtime_mins,
                     total_runtime_secs,
                     cumulative_nonce,
-                    (global_work_size * 4).separated_string(),
+                    (global_work_size * 8).separated_string(),
                 ))?;
 
                 // display information about the attempt rate and found solutions

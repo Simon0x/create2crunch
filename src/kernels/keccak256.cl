@@ -236,8 +236,8 @@ __kernel void hashMessage(
 
   nonce_t nonce;
 
-  // Vectorization: process 4 nonces per work item
-  for (int vec_i = 0; vec_i < 4; vec_i++) {
+  // Vectorization: process 8 nonces per work item
+  for (int vec_i = 0; vec_i < 8; vec_i++) {
 
     // write the control character
     sponge[0] = 0xffu;
@@ -289,7 +289,7 @@ __kernel void hashMessage(
     sponge[44] = d_message[3];
 
     // populate the nonce (vectorized)
-    nonce.uint32_t[0] = get_global_id(0) * 4 + vec_i;
+    nonce.uint32_t[0] = get_global_id(0) * 8 + vec_i;
     nonce.uint32_t[1] = d_nonce[0];
 
   // populate the body of the message with the nonce
