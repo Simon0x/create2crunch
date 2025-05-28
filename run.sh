@@ -20,11 +20,11 @@ if [ "$1" != "" ]; then
     TOTAL_ZEROS=${3:-6}
     
     echo "Using GPU device $DEVICE with minimum $LEADING_ZEROS leading zeros and $TOTAL_ZEROS total zeros"
-    cargo run --release "$FACTORY" "$CALLER" "$INIT_CODE_HASH" "$DEVICE" "$LEADING_ZEROS" "$TOTAL_ZEROS"
+    cargo run --release --bin create2crunch "$FACTORY" "$CALLER" "$INIT_CODE_HASH" "$DEVICE" "$LEADING_ZEROS" "$TOTAL_ZEROS"
 else
     echo "Using CPU mining (basic)"
     echo "To use GPU: ./run.sh <device_id> [leading_zeros] [total_zeros]"
     echo "Example: ./run.sh 0 4 6"
     echo ""
-    cargo run --release "$FACTORY" "$CALLER" "$INIT_CODE_HASH"
+    cargo run --release --bin create2crunch "$FACTORY" "$CALLER" "$INIT_CODE_HASH"
 fi
