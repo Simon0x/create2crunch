@@ -550,11 +550,11 @@ pub fn gpu(config: Config) -> ocl::Result<()> {
 
             // count total and leading zero bytes
             let mut total = 0;
-            let mut leading = 0;
+            let mut leading = 21;
             for (i, &b) in address.iter().enumerate() {
                 if b == 0 {
                     total += 1;
-                } else if leading == 0 {
+                } else if leading == 21 {
                     // set leading on finding non-zero byte
                     leading = i;
                 }
